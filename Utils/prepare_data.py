@@ -3,7 +3,7 @@ import shutil
 
 original_dataset_dir = 'C:/Users/User/Desktop/celeb/'
 
-base_dir = 'C:/Users/User/PycharmProjects/Local/WGAN/celeb'
+base_dir = '/celeb'
 #os.mkdir(base_dir)
 
 train_dir = os.path.join(base_dir, 'training')
