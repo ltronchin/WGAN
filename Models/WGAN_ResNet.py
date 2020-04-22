@@ -1,22 +1,23 @@
 from keras.layers import Input, Conv2D, Flatten, Dense, Conv2DTranspose, Reshape, Lambda, Activation, \
-    BatchNormalization, LeakyReLU, Dropout, ZeroPadding2D, UpSampling2D
+    BatchNormalization, LeakyReLU, Dropout, ZeroPadding2D, UpSampling2D, AveragePooling2D, Add
 from keras.layers.merge import _Merge
-from keras.preprocessing.image import ImageDataGenerator, array_to_img
+from keras.preprocessing.image import array_to_img
 
-from keras.models import Model, Sequential
+from keras.models import Model
 from keras import backend as K
 from keras.optimizers import Adam, RMSprop
-from keras.callbacks import ModelCheckpoint
+
 from keras.utils import plot_model
-from keras.initializers import RandomNormal
+from keras.initializers import RandomNormal, he_uniform
 
 from functools import partial
 
 import numpy as np
-import json
 import os
 import pickle
 import matplotlib.pyplot as plt
+
+
 
 class RandomWeightedAverage(_Merge):
     def __init__(self, batch_size):
@@ -30,7 +31,8 @@ class RandomWeightedAverage(_Merge):
         alpha = K.random_uniform((self.batch_size, 1, 1, 1))
         return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
 
-class WGANGP():
+class WGAN_ResNet():
+
     def __init__(self,
                  input_dim,
                  critic_conv_filters,
@@ -83,6 +85,7 @@ class WGANGP():
         self.n_layers_generator = len(generator_conv_filters)
 
         self.weight_init = RandomNormal(mean=0., stddev=0.02)  # 'he_normal'
+        self.weight_init = he_uniform(seed = 42)
         self.grad_weight = grad_weight
         self.batch_size = batch_size
 
@@ -127,96 +130,98 @@ class WGANGP():
             layer = Activation(activation)
         return layer
 
+    def _residual_block(self, x, number_filter_output, resample, kernel_size=[3, 3]):
+
+        input_shape = x.shape
+        print(input_shape)
+        number_filter_input = input_shape[-1]
+        if resample == 'down':  # Downsample
+            shortcut = AveragePooling2D([2,2])(x)
+            shortcut = Conv2D(filters = number_filter_output,
+                              kernel_size=[1, 1],
+                              kernel_initializer=self.weight_init,
+                              activation = None)(shortcut)
+
+            net = Conv2D(number_filter_input,
+                         padding = 'same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=kernel_size)(x)
+            net = self.get_activation(self.critic_activation)(net)
+            net = Conv2D(number_filter_output,
+                         padding='same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=kernel_size)(net)
+            net = AveragePooling2D([2, 2])(net)
+
+            return Add()([net, shortcut])
+
+        elif resample == 'up':  # Upsample
+            shortcut = UpSampling2D()(x)
+            shortcut = Conv2D(number_filter_output,
+                              kernel_size=[1, 1],
+                              kernel_initializer=self.weight_init,
+                              activation=None)(shortcut)
+
+            net = BatchNormalization()(x)
+            net = self.get_activation(self.generator_activation)(net)
+            net = UpSampling2D()(net)
+            net = Conv2D(number_filter_output,
+                         padding = 'same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=kernel_size)(net)
+            net = BatchNormalization()(net)
+            net = self.get_activation(self.generator_activation)(net)
+            net = Conv2D(number_filter_output,
+                         padding = 'same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=kernel_size)(net)
+
+            return Add()([net, shortcut])
+        else:
+            raise Exception('invalid resample value')
+
+    def _build_generator(self):
+
+        generator_input = Input(shape=(self.z_dim,))
+
+        net = generator_input
+
+        number_of_filter = 64
+        net = Dense(5 * 5 * 8 * number_of_filter, kernel_initializer=self.weight_init, activation=None)(net)  # 5x5x512, lineare layer
+        net = Reshape([5, 5, 8 * number_of_filter])(net)
+        net = self._residual_block(net, 8 * number_of_filter, resample='up')  # 10x10x512
+        net = self._residual_block(net, 4 * number_of_filter, resample='up')  # 20x20x256
+        net = self._residual_block(net, 2 * number_of_filter, resample='up')  # 40x40x128
+        net = self._residual_block(net, 1 * number_of_filter, resample='up')  # 80x80x64
+
+        net = BatchNormalization()(net)
+        net = self.get_activation(self.generator_activation)(net)
+        net = Conv2D(1,kernel_size=[3, 3], kernel_initializer=self.weight_init, padding = 'same', activation='tanh')(net)
+
+        generator_output = net
+        self.generator = Model(generator_input, generator_output)
+
+
     def _build_critic(self):
-        # -------------------------------
-        # Critico: funzione D che converte una immagine in una predizione. L'output del critico può essere un qualsiasi
-        # numero che va tra [-inf, inf] poiché l'ultimo layer del discriminatore non ha più come funzione di attivazione la
-        # sigmoide (come invece accadeva per la dcgan).
-        # Questo significa che la Wasserstein loss può assumere valori molto elevati rendendo instabile il training della rete.
-        # Per ovviare a questo problema si vincola il critico ad essere una funziona continua 1-Lipschitz che può essere
-        # garantito facendo in modo che la differenza di predizione del critico tra due immagini qualsiasi sia minore di 1
-        # -------------------------------
 
-        critic_input = Input(shape = self.input_dim, name = 'critic_input')
+        critic_input = Input(shape = self.input_dim)
 
-        x = critic_input
-
-        for i in range(self.n_layers_critic):
-
-            x = Conv2D(filters = self.critic_conv_filters[i],
-                       kernel_size = self.critic_conv_kernel_size[i],
-                       strides = self.critic_conv_strides[i],
-                       padding = 'same',
-                       name = 'critic_conv_' + str(i),
-                       kernel_initializer = self.weight_init)(x)
-
-            if self.critic_batch_norm_momentum and i > 0:
-                x = BatchNormalization(momentum = self.critic_batch_norm_momentum)(x)
-
-            x = self.get_activation(self.critic_activation)(x)
-
-            if self.critic_dropout_rate:
-                x = Dropout(rate = self.critic_dropout_rate)(x)
-
-        x = Flatten()(x)
-
-        critic_output = Dense(1, activation = None, kernel_initializer = self.weight_init)(x)
+        filter_size = 64
+        net = Conv2D(filter_size,
+                     kernel_size = [3, 3],
+                     padding = 'same',
+                     kernel_initializer=self.weight_init,
+                     activation=None)(critic_input)  # 80x80x64
+        net = self._residual_block(net, 2 * filter_size, resample='down')  # 40x40x128
+        net = self._residual_block(net, 4 * filter_size, resample='down')  # 20x20x256
+        net = self._residual_block(net, 8 * filter_size, resample='down')  # 10x10x512
+        net = self._residual_block(net, 8 * filter_size, resample='down')  # 5x5x512
+        net = Flatten()(net)
+        critic_output = Dense(1,kernel_initializer=self.weight_init, activation =None)(net)
 
         self.critic = Model(critic_input, critic_output)
         self.critic.summary()
 
-    def _build_generator(self):
-
-        generator_input = Input(shape=(self.z_dim,), name='generator_input')
-
-        x = generator_input
-
-        x = Dense(np.prod(self.generator_initial_dense_layer_size), kernel_initializer=self.weight_init)(x)
-        if self.generator_batch_norm_momentum:
-            x = BatchNormalization(momentum=self.generator_batch_norm_momentum)(x)
-
-        x = self.get_activation(self.generator_activation)(x)
-
-        x = Reshape(self.generator_initial_dense_layer_size)(x)
-
-        if self.generator_dropout_rate:
-            x = Dropout(rate=self.generator_dropout_rate)(x)
-
-        for i in range(self.n_layers_generator):
-
-            if self.generator_upsample[i] == 2:
-                x = UpSampling2D()(x)
-                x = Conv2D(
-                    filters=self.generator_conv_filters[i]
-                    , kernel_size=self.generator_conv_kernel_size[i]
-                    , padding='same'
-                    , name='generator_conv_' + str(i)
-                    , kernel_initializer=self.weight_init
-                )(x)
-            else:
-                x = Conv2DTranspose(
-                    filters=self.generator_conv_filters[i]
-                    , kernel_size=self.generator_conv_kernel_size[i]
-                    , padding='same'
-                    , strides=self.generator_conv_strides[i]
-                    , name='generator_conv_' + str(i)
-                    , kernel_initializer=self.weight_init
-                )(x)
-
-            if i < self.n_layers_generator - 1:
-
-                if self.generator_batch_norm_momentum:
-                    x = BatchNormalization(momentum=self.generator_batch_norm_momentum)(x)
-
-                x = self.get_activation(self.generator_activation)(x)
-
-            else:
-                x = Activation('tanh')(x)
-
-        generator_output = x
-        self.generator = Model(generator_input, generator_output)
-
-    # funzione per la scelta dell'ottimizzatore da utilizzare
     def get_opti(self, lr):
         if self.optimiser == 'adam':
             opti = Adam(lr=lr, beta_1=0.5)
@@ -274,9 +279,9 @@ class WGANGP():
         # e false e la gradient Penalty Loss. La loss complessiva del critico è la somma delle singole loss con la gradiente
         # penalty loss pesata di un fattore 10 rispetto alle altre due (vedi paper originale)
         self.critic_model.compile(
-            loss = [self.wasserstein, self.wasserstein, partial_gp_loss],
-            optimizer = self.get_opti(self.critic_learning_rate),
-            loss_weights = [1, 1, self.grad_weight])
+            loss=[self.wasserstein, self.wasserstein, partial_gp_loss],
+            optimizer=self.get_opti(self.critic_learning_rate),
+            loss_weights=[1, 1, self.grad_weight])
 
         # -------------------------------
         # Costruzione della rete per il training del generatore
@@ -323,7 +328,7 @@ class WGANGP():
             true_imgs = x_train[idx]
 
         noise = np.random.normal(0, 1, (batch_size, self.z_dim))
-
+        a = [true_imgs, noise]
         d_loss = self.critic_model.train_on_batch([true_imgs, noise], [valid, fake, dummy])
         return d_loss
 
@@ -356,7 +361,7 @@ class WGANGP():
             g_loss = self.train_generator(batch_size)
 
             print("%d (%d, %d) [D loss: (%.1f)(R %.1f, F %.1f, G %.1f)] [G loss: %.1f]" % (
-            epoch, n_critic, 1, d_loss[0], d_loss[1], d_loss[2], d_loss[3], g_loss))
+                epoch, n_critic, 1, d_loss[0], d_loss[1], d_loss[2], d_loss[3], g_loss))
 
             self.d_losses.append(d_loss)
             self.g_losses.append(g_loss)
@@ -412,7 +417,7 @@ class WGANGP():
             ax = fig.add_subplot(2, 10, i)
             ax.imshow(array_to_img(img_real), cmap='gray')
             ax.axis('off')
-        plt.savefig(os.path.join(run_folder, "plot/Visual_Turing_test_epoch_%d.png"%(self.epoch)), dpi=1200, format='png')
+        plt.savefig(os.path.join(run_folder, "plot/Visual_Turing_test_epoch%d.png"%(self.epoch)), dpi=1200, format='png')
         plt.close()
 
     def sample_images(self, run_folder):
@@ -443,9 +448,12 @@ class WGANGP():
         plt.close()
 
     def plot_model(self, run_folder):
-        plot_model(self.model, to_file = os.path.join(run_folder, 'plot/model.png'), show_shapes = True, show_layer_names = True)
-        plot_model(self.critic, to_file = os.path.join(run_folder, 'plot/critic.png'), show_shapes = True, show_layer_names = True)
-        plot_model(self.generator, to_file = os.path.join(run_folder, 'plot/generator.png'), show_shapes = True, show_layer_names = True)
+        plot_model(self.model, to_file=os.path.join(run_folder, 'plot/model.png'), show_shapes=True,
+                   show_layer_names=True)
+        plot_model(self.critic, to_file=os.path.join(run_folder, 'plot/critic.png'), show_shapes=True,
+                   show_layer_names=True)
+        plot_model(self.generator, to_file=os.path.join(run_folder, 'plot/generator.png'), show_shapes=True,
+                   show_layer_names=True)
 
     def save(self, folder):
 

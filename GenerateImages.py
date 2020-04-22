@@ -29,7 +29,8 @@ def plot_images(imgs, true, path_model):
     plt.show()
 
 # Caricamento del modello trainato
-path_model = 'C:/Users/User/PycharmProjects/Local/WGAN/run/gan/005_ct_images/'
+#path_model = 'C:/Users/User/PycharmProjects/Local/WGAN/run/gan/005_ct_images/'
+path_model = 'D:/Documenti/Tesi/Run/run/gan/006_aug_ct_images/'
 generator = models.load_model(os.path.join(path_model, 'models/generator.h5'))
 
 batch = 64
@@ -37,7 +38,8 @@ gen_imgs = gen_img(batch, generator)
 plot_images(imgs = gen_imgs, true = 'fake', path_model = path_model)
 
 load= Load()
-path_slice = 'C:/Users/User/Desktop/Tesi/Matlab/data/ID_RUN/ID5/Slices_data/layer/slices_padding_layer.mat'
-true_data_flow = load.load_ctslice(path_slice , batch)
+#path_slice = 'C:/Users/User/Desktop/Tesi/Matlab/data/ID_RUN/ID5/Slices_data/layer/slices_padding_layer.mat'
+path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer.mat'
+true_data_flow = load.load_ctslice(path_slice , batch, True)
 true_imgs = next(true_data_flow)
 plot_images(imgs = true_imgs, true = 'real', path_model = path_model)

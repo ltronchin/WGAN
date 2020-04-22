@@ -2,6 +2,7 @@ from keras.datasets import cifar10
 from keras.preprocessing.image import ImageDataGenerator, img_to_array
 import numpy as np
 import scipy.io as sio
+import matplotlib.pyplot as plt
 
 class Load():
     # Caricamento e preparazione delle immagini dal dataset CIFAR10
@@ -34,24 +35,53 @@ class Load():
 
         return data_flow
 
-    def load_ctslice(self, path_slices, batch_size):
+    def load_ctslice(self, path_slices, batch_size, augmentation):
 
         load = sio.loadmat(path_slices)
         print(load.keys())
-        data = load['slices_padding_layer'][0]
+        data = load['slices_padding_layer_adaptive'][0]
 
         slices = []
         for idx in range(data.shape[0]):
-            slices.append(img_to_array(data[idx][0]))
+            slices.append(img_to_array(data[idx][0], dtype='double'))
 
         slices = np.array(slices)
 
         print("[INFO]-- Numero e dimensione slice {}".format(slices.shape))
+        if augmentation:
+            data_gen = ImageDataGenerator(rotation_range = 175,
+                                          width_shift_range = (-7, +7),
+                                          height_shift_range = (-7, +7),
+                                          horizontal_flip = 'true',
+                                          vertical_flip = 'true',
+                                          fill_mode = 'constant',
+                                          cval = 0,
+                                          preprocessing_function=lambda x: (x.astype('double') - 0.5) / 0.5)
+        else:
+            # in python double = float64
+            data_gen = ImageDataGenerator(preprocessing_function=lambda x: (x.astype('double') - 0.5) / 0.5)
 
-        # in python double = float64
-        data_gen = ImageDataGenerator(preprocessing_function=lambda x: (x.astype('double') - 0.5) / 0.5)
         data_flow = data_gen.flow(slices,
                                   batch_size=batch_size,
                                   shuffle=True)
 
+        true_imgs = next(data_flow)
+        self.plot_images(imgs=true_imgs)
+
         return data_flow
+
+    def plot_images(self, imgs):
+
+        imgs = 0.5 * (imgs + 1)
+        imgs = np.clip(imgs, 0, 1)
+
+        fig, axs = plt.subplots(8, 8, figsize=(15, 15))
+        idx = 0
+
+        for i in range(8):
+            for j in range(8):
+                axs[i, j].imshow(np.squeeze(imgs[idx, :, :, :]), cmap='gray')
+                axs[i, j].axis('off')
+                idx += 1
+
+        plt.show()

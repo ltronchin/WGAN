@@ -4,16 +4,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from Utils.Load import Load
 from Models.WGANGP import WGANGP
-
+from Models.WGAN_ResNet import WGAN_ResNet
 # -------------------------------
 #
 # -------------------------------
 
 # Parametri della RUN
 section = 'gan'
-run_id = '005'
+run_id = '006_aug_adaptive_resnet'
 data_name = 'ct_images'
-run_folder = 'run/{}/'.format(section)
+
+run_folder = 'D:/Documenti/Tesi/Run/run/{}/'.format(section)
+#run_folder = 'run/{}/'.format(section)
 run_folder += '_'.join([run_id, data_name])
 print(run_folder)
 
@@ -25,30 +27,30 @@ if not os.path.exists(run_folder):
     os.makedirs(os.path.join(run_folder, 'models'))
 
 mode = 'build' # 'load'
-#data_folder = 'C:/Users/User/PycharmProjects/Local/WGAN/celeb'
-path_slice = 'C:/Users/User/Desktop/Tesi/Matlab/data/ID_RUN/ID5/Slices_data/layer/slices_padding_layer.mat'
 
+#path_slice = 'C:/Users/User/Desktop/Tesi/Matlab/data/ID_RUN/ID5/Slices_data/layer/slices_padding_layer.mat'
+path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer_adaptive.mat'
 # -- DATA --
 
 load= Load()
 
-batch_size = 128
+batch_size = 64
 image_size = 80
 input_dim = (image_size, image_size, 1)
-data_flow = load.load_ctslice(path_slice, batch_size)
+data_flow = load.load_ctslice(path_slice, batch_size, True)
 
 imgs_real = next(data_flow)
 print(imgs_real.shape)
 
 # -- ARCHITETTURA --
-gan = WGANGP(input_dim = input_dim,
+gan = WGAN_ResNet(input_dim = input_dim,
              critic_conv_filters = [128, 256, 512, 1024],
              critic_conv_kernel_size = [5, 5, 5, 5],
              critic_conv_strides = [2, 2, 2, 2],
              critic_batch_norm_momentum = None,
              critic_activation = 'leaky_relu',
              critic_dropout_rate = None,
-             critic_learning_rate = 0.0002,
+             critic_learning_rate = 0.0001,#0.0002
              generator_initial_dense_layer_size = (5, 5, 1024),
              generator_upsample = [2, 2, 2, 2],
              generator_conv_filters = [512, 256, 128, 1],
@@ -60,11 +62,12 @@ gan = WGANGP(input_dim = input_dim,
              generator_learning_rate = 0.0002,
              optimiser = 'adam',
              grad_weight = 10,
-             z_dim = 100,
+             z_dim = 128,
              batch_size = batch_size)
 
 if mode == 'build':
-    gan.save(run_folder)
+    #gan.save(run_folder)
+    print('RUN')
 else:
     gan.load_weights(os.path.join(run_folder, 'weights/weights.h5'))
 
@@ -73,7 +76,7 @@ gan.generator.summary()
 
 # -- TRAINING --
 epochs = 10000
-print_every_n_batch = 10
+print_every_n_batch = 5
 n_critic = 5
 
 gan.train(data_flow,
