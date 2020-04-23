@@ -7,10 +7,10 @@ from keras.preprocessing.image import array_to_img
 
 def gen_img(batch, generator):
     # funzione per la generazione di una batch di immagini
-    noise = np.random.normal(0, 1, (batch, 100))
+    noise = np.random.normal(0, 1, (batch, 128))
     return generator.predict(noise)
 
-def plot_images(imgs, true, path_model):
+def plot_images(imgs, true, path_model,  n_image):
 
     imgs = 0.5 * (imgs + 1)
     imgs = np.clip(imgs, 0, 1)
@@ -25,21 +25,23 @@ def plot_images(imgs, true, path_model):
             axs[i, j].axis('off')
             idx += 1
 
-    plt.savefig(os.path.join(path_model,"{}.png".format(true)), dpi=1200, format='png')
+    plt.savefig(os.path.join(path_model,"{}_{}.png".format(true,n_image)), dpi=1200, format='png')
     plt.show()
 
 # Caricamento del modello trainato
-#path_model = 'C:/Users/User/PycharmProjects/Local/WGAN/run/gan/005_ct_images/'
-path_model = 'D:/Documenti/Tesi/Run/run/gan/006_aug_ct_images/'
+path_model = 'D:/Documenti/Tesi/Run/run/gan/006_aug_adaptive_resnet_ct_images/'
 generator = models.load_model(os.path.join(path_model, 'models/generator.h5'))
-
-batch = 64
-gen_imgs = gen_img(batch, generator)
-plot_images(imgs = gen_imgs, true = 'fake', path_model = path_model)
-
 load= Load()
-#path_slice = 'C:/Users/User/Desktop/Tesi/Matlab/data/ID_RUN/ID5/Slices_data/layer/slices_padding_layer.mat'
-path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer.mat'
+batch = 64
+images = 5
+path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer_adaptive.mat'
 true_data_flow = load.load_ctslice(path_slice , batch, True)
-true_imgs = next(true_data_flow)
-plot_images(imgs = true_imgs, true = 'real', path_model = path_model)
+
+for i in range(images):
+    # Immagini false
+    gen_imgs = gen_img(batch, generator)
+    plot_images(imgs = gen_imgs, true = 'fake', path_model = path_model, n_image = i)
+
+    # Immagini reali
+    true_imgs = next(true_data_flow)
+    plot_images(imgs = true_imgs, true = 'real', path_model = path_model, n_image = i)

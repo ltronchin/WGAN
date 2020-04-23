@@ -4,14 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from Utils.Load import Load
 from Models.WGANGP import WGANGP
-from Models.WGAN_ResNet import WGAN_ResNet
+
 # -------------------------------
 #
 # -------------------------------
 
 # Parametri della RUN
 section = 'gan'
-run_id = '006_aug_adaptive_resnet'
+run_id = 'resnet_vers2'
 data_name = 'ct_images'
 
 run_folder = 'D:/Documenti/Tesi/Run/run/{}/'.format(section)
@@ -43,14 +43,14 @@ imgs_real = next(data_flow)
 print(imgs_real.shape)
 
 # -- ARCHITETTURA --
-gan = WGAN_ResNet(input_dim = input_dim,
+gan = WGANGP(input_dim = input_dim,
              critic_conv_filters = [128, 256, 512, 1024],
              critic_conv_kernel_size = [5, 5, 5, 5],
              critic_conv_strides = [2, 2, 2, 2],
              critic_batch_norm_momentum = None,
              critic_activation = 'leaky_relu',
              critic_dropout_rate = None,
-             critic_learning_rate = 0.0001,#0.0002
+             critic_learning_rate = 0.0002,
              generator_initial_dense_layer_size = (5, 5, 1024),
              generator_upsample = [2, 2, 2, 2],
              generator_conv_filters = [512, 256, 128, 1],
@@ -63,7 +63,9 @@ gan = WGAN_ResNet(input_dim = input_dim,
              optimiser = 'adam',
              grad_weight = 10,
              z_dim = 128,
-             batch_size = batch_size)
+             batch_size = batch_size,
+             use_resnet = True,
+             number_of_filters  = 64)
 
 if mode == 'build':
     #gan.save(run_folder)

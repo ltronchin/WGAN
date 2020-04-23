@@ -1,19 +1,19 @@
-from keras.layers import Input, Conv2D, Flatten, Dense, Conv2DTranspose, Reshape, Lambda, Activation, \
-    BatchNormalization, LeakyReLU, Dropout, ZeroPadding2D, UpSampling2D
+from keras.layers import Input, Conv2D, Flatten, Dense, Conv2DTranspose, Reshape, Activation, \
+    BatchNormalization, LeakyReLU, Dropout, UpSampling2D, AveragePooling2D, Add
 from keras.layers.merge import _Merge
-from keras.preprocessing.image import ImageDataGenerator, array_to_img
+from keras.preprocessing.image import array_to_img
 
-from keras.models import Model, Sequential
+#from tensorflow.keras.layers import LayerNormalization
+
+from keras.models import Model
 from keras import backend as K
 from keras.optimizers import Adam, RMSprop
-from keras.callbacks import ModelCheckpoint
 from keras.utils import plot_model
 from keras.initializers import RandomNormal
 
 from functools import partial
 
 import numpy as np
-import json
 import os
 import pickle
 import matplotlib.pyplot as plt
@@ -52,7 +52,9 @@ class WGANGP():
                  optimiser,
                  grad_weight,
                  z_dim,
-                 batch_size):
+                 batch_size,
+                 use_resnet,
+                 number_of_filters):
 
         self.name = 'gan'
 
@@ -90,8 +92,15 @@ class WGANGP():
         self.g_losses = []
         self.epoch = 0
 
-        self._build_critic()
-        self._build_generator()
+        self.number_of_filters = number_of_filters
+
+        self.use_resnet = use_resnet
+        if self.use_resnet == True:
+            self._build_critic_resnet()
+            self._build_generator_resnet()
+        else:
+            self._build_critic()
+            self._build_generator()
 
         self._build_adversarial()
 
@@ -495,3 +504,97 @@ class WGANGP():
         plt.legend()
         plt.savefig(os.path.join(run_folder, "plot/loss.png"), dpi=1200, format='png')
         plt.show()
+
+     # Sezione RESNET: l'architettura della rete resnet utilizzata fa riferimento all'articolo "Improve training of Wgan"
+
+    # Residual block per l'architettura RESNET
+    def _residual_block(self, x, number_filter_output, resample):
+
+        input_shape = x.shape
+        print(input_shape)
+        number_filter_input = input_shape[-1]
+        if resample == 'down':  # Downsample
+            shortcut = AveragePooling2D([2,2])(x)
+            shortcut = Conv2D(filters = number_filter_output,
+                              kernel_size=[1, 1],
+                              kernel_initializer=self.weight_init,
+                              activation = None)(shortcut)
+
+            net = self.get_activation(self.critic_activation)(x)
+            net = Conv2D(number_filter_input,
+                         padding = 'same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=[3, 3])(net)
+            net = self.get_activation(self.critic_activation)(net)
+            net = Conv2D(number_filter_output,
+                         padding='same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=[3, 3])(net)
+            net = AveragePooling2D([2, 2])(net)
+
+            return Add()([net, shortcut])
+
+        elif resample == 'up':  # Upsample
+            shortcut = UpSampling2D()(x)
+            shortcut = Conv2D(number_filter_output,
+                              kernel_size=[1, 1],
+                              kernel_initializer=self.weight_init,
+                              activation=None)(shortcut)
+
+            net = BatchNormalization()(x)
+            net = self.get_activation(self.generator_activation)(net)
+            net = UpSampling2D()(net)
+            net = Conv2D(number_filter_output,
+                         padding = 'same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=[3, 3])(net)
+            net = BatchNormalization()(net)
+            net = self.get_activation(self.generator_activation)(net)
+            net = Conv2D(number_filter_output,
+                         padding = 'same',
+                         kernel_initializer=self.weight_init,
+                         kernel_size=[3, 3])(net)
+
+            return Add()([net, shortcut])
+        else:
+            raise Exception('invalid resample value')
+
+    def _build_generator_resnet(self):
+
+        generator_input = Input(shape=(self.z_dim,))
+
+        net = generator_input
+
+        net = Dense(5 * 5 * 8 * self.number_of_filters, kernel_initializer=self.weight_init, activation=None)(net)  # 5x5x512, fully connected/linear layer
+        net = Reshape([5, 5, 8 * self.number_of_filters])(net)
+        net = self._residual_block(net, 8 * self.number_of_filters, resample='up')  # 10x10x512
+        net = self._residual_block(net, 4 * self.number_of_filters, resample='up')  # 20x20x256
+        net = self._residual_block(net, 2 * self.number_of_filters, resample='up')  # 40x40x128
+        net = self._residual_block(net, 1 * self.number_of_filters, resample='up')  # 80x80x64
+
+        net = BatchNormalization()(net)
+        net = self.get_activation(self.generator_activation)(net)
+        net = Conv2D(1,kernel_size=[3, 3], kernel_initializer=self.weight_init, padding = 'same', activation='tanh')(net)
+
+        generator_output = net
+        self.generator = Model(generator_input, generator_output)
+
+    def _build_critic_resnet(self):
+
+        critic_input = Input(shape = self.input_dim)
+
+        filter_size = 64
+        net = Conv2D(filter_size,
+                     kernel_size = [3, 3],
+                     padding = 'same',
+                     kernel_initializer=self.weight_init,
+                     activation=None)(critic_input)  # 80x80x64
+        net = self._residual_block(net, 2 * filter_size, resample='down')  # 40x40x128
+        net = self._residual_block(net, 4 * filter_size, resample='down')  # 20x20x256
+        net = self._residual_block(net, 8 * filter_size, resample='down')  # 10x10x512
+        net = self._residual_block(net, 8 * filter_size, resample='down')  # 5x5x512
+        net = Flatten()(net)
+        critic_output = Dense(1,kernel_initializer=self.weight_init, activation =None)(net)
+
+        self.critic = Model(critic_input, critic_output)
+        self.critic.summary()
