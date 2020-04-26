@@ -29,13 +29,13 @@ def plot_images(imgs, true, path_model,  n_image):
     plt.show()
 
 # Caricamento del modello trainato
-path_model = 'D:/Documenti/Tesi/Run/run/gan/006_aug_adaptive_resnet_ct_images/'
+path_model = 'D:/Documenti/Tesi/Run/run/gan/WGAN-resnet/002_resnet_adaptive_continue/'
 generator = models.load_model(os.path.join(path_model, 'models/generator.h5'))
 load= Load()
 batch = 64
 images = 5
 path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer_adaptive.mat'
-true_data_flow = load.load_ctslice(path_slice , batch, True)
+true_data_flow = load.load_ctslice(path_slice , batch, augmentation = True)
 
 for i in range(images):
     # Immagini false

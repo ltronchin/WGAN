@@ -1,5 +1,3 @@
-
-
 class InceptionScore():
 
 # Il modello pre-trainato, per ogni immagine, restituisce una valore di

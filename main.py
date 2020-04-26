@@ -11,7 +11,7 @@ from Models.WGANGP import WGANGP
 
 # Parametri della RUN
 section = 'gan'
-run_id = 'resnet_vers2'
+run_id = '003_resnet_adaptive'
 data_name = 'ct_images'
 
 run_folder = 'D:/Documenti/Tesi/Run/run/{}/'.format(section)
@@ -37,7 +37,7 @@ load= Load()
 batch_size = 64
 image_size = 80
 input_dim = (image_size, image_size, 1)
-data_flow = load.load_ctslice(path_slice, batch_size, True)
+data_flow = load.load_ctslice(path_slice, batch_size, augmentation = True)
 
 imgs_real = next(data_flow)
 print(imgs_real.shape)
@@ -50,7 +50,7 @@ gan = WGANGP(input_dim = input_dim,
              critic_batch_norm_momentum = None,
              critic_activation = 'leaky_relu',
              critic_dropout_rate = None,
-             critic_learning_rate = 0.0002,
+             critic_learning_rate = 0.0001,
              generator_initial_dense_layer_size = (5, 5, 1024),
              generator_upsample = [2, 2, 2, 2],
              generator_conv_filters = [512, 256, 128, 1],
@@ -65,7 +65,8 @@ gan = WGANGP(input_dim = input_dim,
              z_dim = 128,
              batch_size = batch_size,
              use_resnet = True,
-             number_of_filters  = 64)
+             number_of_filters_generator  = 64,
+             number_of_filters_critic = 64)
 
 if mode == 'build':
     #gan.save(run_folder)

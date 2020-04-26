@@ -9,7 +9,7 @@ from keras.models import Model
 from keras import backend as K
 from keras.optimizers import Adam, RMSprop
 from keras.utils import plot_model
-from keras.initializers import RandomNormal
+from keras.initializers import RandomNormal, he_uniform
 
 from functools import partial
 
@@ -54,7 +54,8 @@ class WGANGP():
                  z_dim,
                  batch_size,
                  use_resnet,
-                 number_of_filters):
+                 number_of_filters_generator,
+                 number_of_filters_critic):
 
         self.name = 'gan'
 
@@ -84,7 +85,8 @@ class WGANGP():
         self.n_layers_critic = len(critic_conv_filters)
         self.n_layers_generator = len(generator_conv_filters)
 
-        self.weight_init = RandomNormal(mean=0., stddev=0.02)  # 'he_normal'
+        #self.weight_init = RandomNormal(mean=0., stddev=0.02)
+        self.weight_init = he_uniform(seed=42)
         self.grad_weight = grad_weight
         self.batch_size = batch_size
 
@@ -92,7 +94,8 @@ class WGANGP():
         self.g_losses = []
         self.epoch = 0
 
-        self.number_of_filters = number_of_filters
+        self.number_of_filters_generator = number_of_filters_generator
+        self.number_of_filters_critic = number_of_filters_critic
 
         self.use_resnet = use_resnet
         if self.use_resnet == True:
@@ -502,7 +505,7 @@ class WGANGP():
         plt.xlabel('Epochs', fontsize=18)
         plt.ylabel('Wasserstein loss', fontsize=18)
         plt.legend()
-        plt.savefig(os.path.join(run_folder, "plot/loss.png"), dpi=1200, format='png')
+        plt.savefig(os.path.join(run_folder, "plot/loss_%d.png"%self.epoch), dpi=1200, format='png')
         plt.show()
 
      # Sezione RESNET: l'architettura della rete resnet utilizzata fa riferimento all'articolo "Improve training of Wgan"
@@ -565,12 +568,12 @@ class WGANGP():
 
         net = generator_input
 
-        net = Dense(5 * 5 * 8 * self.number_of_filters, kernel_initializer=self.weight_init, activation=None)(net)  # 5x5x512, fully connected/linear layer
-        net = Reshape([5, 5, 8 * self.number_of_filters])(net)
-        net = self._residual_block(net, 8 * self.number_of_filters, resample='up')  # 10x10x512
-        net = self._residual_block(net, 4 * self.number_of_filters, resample='up')  # 20x20x256
-        net = self._residual_block(net, 2 * self.number_of_filters, resample='up')  # 40x40x128
-        net = self._residual_block(net, 1 * self.number_of_filters, resample='up')  # 80x80x64
+        net = Dense(5 * 5 * 8 * self.number_of_filters_generator, kernel_initializer=self.weight_init, activation=None)(net)  # 5x5x512, fully connected/linear layer
+        net = Reshape([5, 5, 8 * self.number_of_filters_generator])(net)
+        net = self._residual_block(net, 8 * self.number_of_filters_generator, resample='up')  # 10x10x512
+        net = self._residual_block(net, 4 * self.number_of_filters_generator, resample='up')  # 20x20x256
+        net = self._residual_block(net, 2 * self.number_of_filters_generator, resample='up')  # 40x40x128
+        net = self._residual_block(net, 1 * self.number_of_filters_generator, resample='up')  # 80x80x64
 
         net = BatchNormalization()(net)
         net = self.get_activation(self.generator_activation)(net)
@@ -583,16 +586,15 @@ class WGANGP():
 
         critic_input = Input(shape = self.input_dim)
 
-        filter_size = 64
-        net = Conv2D(filter_size,
+        net = Conv2D(self.number_of_filters_critic,
                      kernel_size = [3, 3],
                      padding = 'same',
                      kernel_initializer=self.weight_init,
                      activation=None)(critic_input)  # 80x80x64
-        net = self._residual_block(net, 2 * filter_size, resample='down')  # 40x40x128
-        net = self._residual_block(net, 4 * filter_size, resample='down')  # 20x20x256
-        net = self._residual_block(net, 8 * filter_size, resample='down')  # 10x10x512
-        net = self._residual_block(net, 8 * filter_size, resample='down')  # 5x5x512
+        net = self._residual_block(net, 2 * self.number_of_filters_critic, resample='down')  # 40x40x128
+        net = self._residual_block(net, 4 * self.number_of_filters_critic, resample='down')  # 20x20x256
+        net = self._residual_block(net, 8 * self.number_of_filters_critic, resample='down')  # 10x10x512
+        net = self._residual_block(net, 8 * self.number_of_filters_critic, resample='down')  # 5x5x512
         net = Flatten()(net)
         critic_output = Dense(1,kernel_initializer=self.weight_init, activation =None)(net)
 
