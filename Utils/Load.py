@@ -3,6 +3,8 @@ from keras.preprocessing.image import ImageDataGenerator, img_to_array
 import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
+from keras.utils import to_categorical
+
 
 class Load():
     # Caricamento e preparazione delle immagini dal dataset CIFAR10
@@ -35,17 +37,20 @@ class Load():
 
         return data_flow
 
-    def load_ctslice(self, path_slices, batch_size, augmentation):
+    def load_ctslice(self, path_slices, batch_size, augmentation, acgan):
 
         load = sio.loadmat(path_slices)
         print(load.keys())
         data = load['slices_padding_layer_adaptive'][0]
 
         slices = []
+        labels = []
         for idx in range(data.shape[0]):
             slices.append(img_to_array(data[idx][0], dtype='double'))
-
+            labels.append(data[idx][2][0])
         slices = np.array(slices)
+        labels = np.array(labels)
+        #labels_categ = to_categorical(labels, 2, dtype = 'float32')
 
         print("[INFO]-- Numero e dimensione slice {}".format(slices.shape))
         if augmentation:
@@ -56,17 +61,23 @@ class Load():
                                           vertical_flip = 'true',
                                           fill_mode = 'constant',
                                           cval = 0,
-                                          preprocessing_function=lambda x: (x.astype('double') - 0.5) / 0.5)
+                                          preprocessing_function=lambda x: ((x.astype('double') - 0.5) / 0.5))
         else:
-            # in python double = float64
-            data_gen = ImageDataGenerator(preprocessing_function=lambda x: (x.astype('double') - 0.5) / 0.5)
+            data_gen = ImageDataGenerator(preprocessing_function=lambda x: ((x.astype('double') - 0.5) / 0.5))  # in python double = float64
 
-        data_flow = data_gen.flow(slices,
-                                  batch_size=batch_size,
-                                  shuffle=True)
+        if acgan:
+            data_flow = data_gen.flow(slices,
+                                      labels,
+                                      batch_size=batch_size,
+                                      shuffle=True)
+        else:
+            data_flow = data_gen.flow(slices,
+                                      batch_size=batch_size,
+                                      shuffle=True)
 
-        true_imgs = next(data_flow)
-        self.plot_images(imgs=true_imgs)
+        real_data = next(data_flow) # tupla
+        print(real_data.shape)
+        #self.plot_images(imgs=real_data)
 
         return data_flow
 
