@@ -5,18 +5,16 @@ import matplotlib.pyplot as plt
 from Utils.Load import Load
 from Models.WGANGP import WGANGP
 
-import tensorflow as tf
-gpus = tf.config.experimental.list_physical_devices('GPU')
-tf.config.experimental.set_memory_growth(gpus[0], True)
-
 # Parametri della RUN
 section = 'gan'
-run_id = '004_resnet_adaptive_ct_images_continue'
+run_id = 'select'
 run_folder = 'D:/Documenti/Tesi/Run/run/{}/'.format(section)
 model = 'WGAN-resnet'
 data = 'Data augmentation'
-idd = '004'
-run_folder += '/'.join([model, data, idd, run_id])
+idd = '003'
+dataset = 'ID2'
+label = 'adaptive'
+run_folder += '/'.join([model, data, idd, dataset, label, run_id])
 print(run_folder)
 
 if not os.path.exists(run_folder):
@@ -28,7 +26,7 @@ if not os.path.exists(run_folder):
 
 mode = 'load' # 'build'
 
-path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer_adaptive.mat'
+path_slice = 'D:/Download/data/ID_RUN/ID2/Slices_data/layer/slices_padding_layer_not_adaptive.mat'
 # -- DATA --
 
 load= Load()
@@ -39,10 +37,9 @@ input_dim = (image_size, image_size, 1)
 data_flow = load.load_ctslice(path_slice,
                               batch_size,
                               augmentation = True,
-                              acgan = False)
+                              acgan = False,
+                              file_mat='slices_padding_layer_not_adaptive')
 
-# tupla che contiene all'indice 0 una batch di immagini (imgs_real[0]) e all'
-# indice 1 le label associate
 real_data = next(data_flow)
 print(real_data.shape)
 
@@ -54,13 +51,13 @@ gan = WGANGP(input_dim = input_dim,
              critic_batch_norm_momentum = None,
              critic_activation = 'leaky_relu',
              critic_dropout_rate = None,
-             critic_learning_rate = 0.0002, #0.0001
+             critic_learning_rate = 0.0001, #0.0002
              generator_initial_dense_layer_size = (5, 5, 1024),
              generator_upsample = [2, 2, 2, 2],
              generator_conv_filters = [512, 256, 128, 1],
              generator_conv_kernel_size = [5, 5, 5, 5],
              generator_conv_strides = [2, 2, 2, 2],
-             generator_batch_norm_momentum = 0.9, #0.99
+             generator_batch_norm_momentum = 0.99, #0.9
              generator_activation = 'leaky_relu',
              generator_dropout_rate = None,
              generator_learning_rate = 0.0002,
@@ -76,7 +73,7 @@ if mode == 'build':
     #gan.save(run_folder)
     print('RUN')
 else:
-    gan.load_weights(os.path.join(run_folder, 'weights/weights.h5'))
+    gan.load_weights(os.path.join(run_folder, 'weights/weights.h5'),run_folder)
 
 gan.critic.summary()
 gan.generator.summary()
@@ -106,5 +103,3 @@ plt.ylabel('Wasserstein loss', fontsize=18)
 plt.legend()
 plt.savefig(os.path.join(run_folder, "plot/loss.png"), dpi=1200, format='png')
 plt.show()
-
-gan.turing_test(data_flow, run_folder)

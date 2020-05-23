@@ -37,11 +37,11 @@ class Load():
 
         return data_flow
 
-    def load_ctslice(self, path_slices, batch_size, augmentation, acgan):
+    def load_ctslice(self, path_slices, batch_size, augmentation, acgan, file_mat):
 
         load = sio.loadmat(path_slices)
         print(load.keys())
-        data = load['slices_padding_layer_adaptive'][0]
+        data = load[file_mat][0]
 
         slices = []
         labels = []

@@ -4,7 +4,6 @@ from keras.layers.merge import _Merge
 from keras.preprocessing.image import array_to_img
 
 #from tensorflow.keras.layers import LayerNormalization
-from keras_layer_normalization import LayerNormalization
 
 from keras.models import Model
 from keras import backend as K
@@ -24,10 +23,11 @@ class RandomWeightedAverage(_Merge):
         super().__init__()
         self.batch_size = batch_size
 
-    """Provides a (random) weighted average between real and generated image samples"""
-
+    "Fornisce una media pesata tra le immagini reali e quella generate"
     def _merge_function(self, inputs):
-
+        # K.random_uniform restituisce un tensore alpha di dimensione [batch_size, 1, 1, 1] i cui valori sono campionati
+        # randomicamente tra 0 e 1 -- ad ogni immagine della batch viene assegnato un numero random tra 0 e 1 salvato nel tensore
+        # alpha
         alpha = K.random_uniform((self.batch_size, 1, 1, 1))
         return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
 
@@ -110,18 +110,24 @@ class WGANGP():
 
     def gradient_penalty_loss(self, y_true, y_pred, interpolated_samples):
         # -------------------------------
-        # Gradiente penalty loss -> termine nella loss function che penalizza il modello se la norma del gradiente del
-        # critico devia da 1. La penalizzazione del gradiente è calcolata sulla base delle predizioni del critico su campioni
-        # creati interpolando immagini reali e false.
+        # Gradiente penalty loss -> termine nella loss function nel 'critic_model_training' che penalizza il modello se
+        # la norma del gradiente del critico sulle immagini interpolate critico devia da 1. La penalizzazione del gradiente
+        # è calcolata sulla base delle predizioni del critico su campioni creati interpolando immagini reali e false.
         # -------------------------------
-        gradients = K.gradients(y_pred, interpolated_samples)[0]
 
-        gradients_sqr = K.square(gradients)
+        # Calcolo del gradiente
+        gradients = K.gradients(y_pred, interpolated_samples)[0]
+        # Calcolo della norma Euclidea o L2_norm del vettore dei gradienti: sqrt(sum(grad(i)^2)) dove grad(i) è l'elemento
+        # i-esimo del vettore gradients
+        gradients_sqr = K.square(gradients) # quadrato di tutti gli elementi del vettore
         gradients_sqr_sum = K.sum(gradients_sqr,
-                                  axis=np.arange(1, len(gradients_sqr.shape)))
-        gradient_l2_norm = K.sqrt(gradients_sqr_sum)
-        gradient_penalty = K.square(1 - gradient_l2_norm)
-        return K.mean(gradient_penalty)
+                                  axis=np.arange(1, len(gradients_sqr.shape))) # somma lungo le righe
+        gradient_l2_norm = K.sqrt(gradients_sqr_sum)  # applicazione della radice quadrata
+        # Il gradient penalty si calcola come la differenza al quadrato tra la norma Euclidea del gradiente e 1:
+        # (1 - ||grad||)^2. Si addestra il critico al fine di minimizzare questo valore penalizzando il modello se ||grad||
+        # si discosta da 1.
+        gradient_penalty = K.square(1 - gradient_l2_norm) # gradient penalty per ogni immagini della batch
+        return K.mean(gradient_penalty) # media su tutti i campioni della batch
 
     # Definizione della Wasserstein Loss
     def wasserstein(self, y_true, y_pred):
@@ -224,11 +230,13 @@ class WGANGP():
         generator_output = x
         self.generator = Model(generator_input, generator_output)
 
-     # Sezione RESNET: l'architettura della rete resnet utilizzata fa riferimento all'articolo "Improve training of Wgan"
+    # -------------------------------------
+    # Sezione RESNET: l'architettura della rete resnet utilizzata fa riferimento all'articolo "Improve training of Wgan"
+    # -------------------------------------
 
-    # Residual block per l'architettura RESNET
+
     def _residual_block(self, x, number_filter_output, resample):
-
+        # Residual block per l'architettura RESNET
         input_shape = x.shape
         print(input_shape)
         number_filter_input = input_shape[-1]
@@ -322,7 +330,7 @@ class WGANGP():
         self.critic = Model(critic_input, critic_output)
         self.critic.summary()
 
-    # funzione per la scelta dell'ottimizzatore da utilizzare
+    # Funzione per la scelta dell'ottimizzatore da utilizzare
     def get_opti(self, lr):
         if self.optimiser == 'adam':
             opti = Adam(lr=lr, beta_1=0.5)
@@ -339,29 +347,60 @@ class WGANGP():
 
     def _build_adversarial(self):
 
-        # -------------------------------
-        # Costruzione della rete per il training del critico
-        # -------------------------------
+        # --------------------------------------------------------------------------------------------------------------
+        # Costruzione della rete per il training del critico: definizione di un nuovo modello chiamato 'critic_model_training',
+        # per l'addestramento del discriminatore che utilizza una loss function di 3 addendi in modo da implementare
+        # il gradient penalty loss
+        # --------------------------------------------------------------------------------------------------------------
 
-        # Congelamento dei layer del generatore: il generatore fa parte del modello utilizzato per il training del critico
+        # Congelamento dei layer del generatore: il generatore fa parte del modello utilizzato per il training del discriminatore
         # (le immagini interpolate sono coinvolte nella loss function), quindi è necessario congelare i pesi del generatore
+        # per evitare che si aggiornino quando viene trainato il critico
         self.set_trainable(self.generator, False)
 
+        # -------------------------------
+        #  Training del critico su:
+        #  -- Batch di immagini reali,
+        #  -- Batch di immagini fake,
+        #  -- Batch di immagini interpolate: ogni immagine interpolata è ottenuta eseguendo la media pesata tra una
+        #     immagine reale e una immagine falsa.
+        # -------------------------------
         real_img = Input(shape=self.input_dim)
-        z_disc = Input(shape=(self.z_dim,))
+        z_disc = Input(shape=(self.z_dim,)) # rumore campionato da una distribuzione gaussiana
         fake_img = self.generator(z_disc)
+        interpolated_img = RandomWeightedAverage(self.batch_size)([real_img, fake_img]) # creazione batch di immagini interpolate
 
         # Le immagini reali e fake passano attaverso il critico, il quale le classifica come false o reali
-        fake = self.critic(fake_img)
-        valid = self.critic(real_img)
+        fake = self.critic(fake_img) # predizione su immagini reali,
+        valid = self.critic(real_img) # predizione su immagini false,
+        validity_interpolated = self.critic(interpolated_img) # predizione su immagini interpolate.
 
-        interpolated_img = RandomWeightedAverage(self.batch_size)([real_img, fake_img])
-
-        validity_interpolated = self.critic(interpolated_img)
-
+        # -------------------------------
+        # Perché 'partial'?
+        # La funzione 'partial' di Python permette di definire una nuova funzione, a partire da una già esistente, fissando
+        # un certo numero di argomenti. Quando la nuova funzione viene chiamata non è necessario fornire i valori
+        # fissati.
+        #
+        # In questo caso 'partial' è utilizzato per definire il gradient penalty loss. Infatti Keras si aspetta una loss
+        # function con due input: (predizione (y_true) e verità (y_pred)); per aggiungere il terzo addendo, cioè le immagini interpolate,
+        # si utilizza 'partial'. In questo modo, durante il training, la chiamata alla funzione di perdità di Keras sarà
+        # partial_gp_loss(y_true, y_pred).
+        # -------------------------------
         partial_gp_loss = partial(self.gradient_penalty_loss, interpolated_samples=interpolated_img)
-        partial_gp_loss.__name__ = 'gradient_penalty'
+        partial_gp_loss.__name__ = 'gradient_penalty' # E' necessario nominare la funzione creata
 
+        # -------------------------------
+        # Definizione e compilazione del modello per il training del critico:
+        # -- INPUT: batch di immagini reali, vettore di rumore per la generazione di immagini false.
+        # -- OUTPUT: 1 per le immagini reali, -1 per le immagini false, tensore di zeri per il gradient penalty loss
+        #
+        #  La LOSS FUNCTION per il "critic_model_training". E' la  somma di 3 addendi pesati rispettivamente come 1, 1, 10:
+        # -- Wasserstein loss calcolata per le immagini vere: differenza tra la predizione della rete quando in input
+        #    ci sono immagini vere e 1
+        # -- Wasserstein loss calcola per le immagini false: differenza tra la predizione della rete quando in input ci
+        #    sono immagini false e -1
+        # -- Gradient penalty loss (pesata di un fattore 10 rispetto alle altre due (vedi paper WGAN)
+        # -------------------------------
         self.critic_model = Model(inputs=[real_img, z_disc], outputs=[valid, fake, validity_interpolated])
 
         self.critic_model.compile(
@@ -369,19 +408,20 @@ class WGANGP():
             optimizer = self.get_opti(self.critic_learning_rate),
             loss_weights = [1, 1, self.grad_weight])
 
-        # -------------------------------
-        # Costruzione della rete per il training del generatore
-        # -------------------------------
+        # --------------------------------------------------------------------------------------------------------------
+        # Costruzione del modello per il training del generatore: si costruisce un modello composito con generatore e
+        # critico per addestrare la rete generatrice. L'input del modello è un vettore di rumore, l'output la predizione
+        # del critico sulle immagini generate a partire dal vettore di rumore.
+        # --------------------------------------------------------
 
         # Si  congelano i pesi del critico e si scongelano quelli del generatore
         self.set_trainable(self.critic, False)
         self.set_trainable(self.generator, True)
 
-        # Input del modello: rumore
         model_input = Input(shape=(self.z_dim,))
-        # Output del modello: immagine fake
-        img = self.generator(model_input)
-        model_output = self.critic(img)
+
+        img = self.generator(model_input) # generazione di immagini false
+        model_output = self.critic(img) # predizione del critico sulla immagini generate
 
         self.model = Model(model_input, model_output)
 
@@ -399,8 +439,8 @@ class WGANGP():
         # rispetto y_i = 1 e la predizione per l'immagine generata p_i = D(G(z_i)) rispetto y_i = -1
         # -------------------------------
 
-        valid = np.ones((batch_size, 1), dtype=np.float32)
-        fake = -np.ones((batch_size, 1), dtype=np.float32)
+        valid = np.ones((batch_size, 1), dtype=np.float32) # 1
+        fake = -np.ones((batch_size, 1), dtype=np.float32) # -1
         dummy = np.zeros((batch_size, 1), dtype=np.float32)  # etichette "fantoccio" per il gradient penalty
 
         # se using_generator è True significa che si sta utilizzando un generatore per selezionare batch di immagini reali
@@ -446,7 +486,7 @@ class WGANGP():
             # Training del generatore
             g_loss = self.train_generator(batch_size)
 
-            print("%d (%d, %d) [D loss: (%.1f)(R %.1f, F %.1f, G %.1f)] [G loss: %.1f]" % (
+            print("%d (%d, %d) [D loss: (totale %.1f)(real %.1f, fake %.1f, gradient_penalty %.1f)] [G loss: %.1f]" % (
             epoch, n_critic, 1, d_loss[0], d_loss[1], d_loss[2], d_loss[3], g_loss))
 
             self.d_losses.append(d_loss)
@@ -570,19 +610,30 @@ class WGANGP():
         self.critic.save(os.path.join(run_folder, 'models/critic.h5'))
         self.generator.save(os.path.join(run_folder, 'models/generator.h5'))
 
-    def load_weights(self, filepath):
+    def load_weights(self, filepath, run_folder):
         self.model.load_weights(filepath)
+        self.generator.save(os.path.join(run_folder, 'models/generator.h5'))
+        print("SALVATO")
 
     def plot(self, run_folder):
         # -- PLOT risultati finali --
         fig = plt.figure()
-        plt.plot([x[0] for x in self.d_losses], label='critic average of real and fake', color='black', linewidth=0.35)
-        plt.plot([x[1] for x in self.d_losses], label='critic real', color='green', linewidth=0.35)
+        #plt.plot([x[0] for x in self.d_losses], label='critic average of real and fake', color='black', linewidth=0.35)
+        plt.plot([x[1] for x in self.d_losses], label='critic real', color='blue', linewidth=0.35)
         plt.plot([x[2] for x in self.d_losses], label='critic fake', color='red', linewidth=0.35)
         plt.plot(self.g_losses, label='generator', color='orange', linewidth=0.35)
-
         plt.xlabel('Epochs', fontsize=18)
         plt.ylabel('Wasserstein loss', fontsize=18)
         plt.legend()
+        plt.grid(True)
         plt.savefig(os.path.join(run_folder, "plot/loss_%d.png"%self.epoch), dpi=1200, format='png')
+        plt.show()
+
+        fig = plt.figure()
+        plt.plot([x[3] for x in self.d_losses], label='critic average of real and fake', color='black', linewidth=0.35)
+        plt.xlabel('Epochs', fontsize=18)
+        plt.ylabel('Gradient penalty loss', fontsize=18)
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(run_folder, "plot/gradient_penalty_loss_%d.png" % self.epoch), dpi=1200, format='png')
         plt.show()

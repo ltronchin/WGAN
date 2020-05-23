@@ -15,11 +15,11 @@ def plot_images(imgs, true, path_model,  n_image):
     imgs = 0.5 * (imgs + 1)
     imgs = np.clip(imgs, 0, 1)
 
-    fig, axs = plt.subplots(8, 8, figsize=(15, 15))
+    fig, axs = plt.subplots(5, 5, figsize=(3, 3))
     idx = 0
 
-    for i in range(8):
-        for j in range(8):
+    for i in range(5):
+        for j in range(5):
             #print(i,j)
             axs[i, j].imshow(np.squeeze(imgs[idx, :, :, :]), cmap='gray')
             axs[i, j].axis('off')
@@ -29,13 +29,13 @@ def plot_images(imgs, true, path_model,  n_image):
     plt.show()
 
 # Caricamento del modello trainato
-path_model = 'D:/Documenti/Tesi/Run/run/gan/WGAN-resnet/002_resnet_adaptive_continue/'
+path_model = 'D:/Documenti/Tesi/Run/run/gan/WGAN-resnet/Data augmentation/003/ID8/all/survey'
 generator = models.load_model(os.path.join(path_model, 'models/generator.h5'))
 load= Load()
 batch = 64
-images = 5
-path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer_adaptive.mat'
-true_data_flow = load.load_ctslice(path_slice , batch, augmentation = True)
+images = 1
+path_slice = 'D:/Download/data/ID_RUN/ID8/Slices_data/layer/slices_padding_layer.mat'
+true_data_flow = load.load_ctslice(path_slice , batch, augmentation = True, acgan=False, file_mat='slices_padding_layer')
 
 for i in range(images):
     # Immagini false
